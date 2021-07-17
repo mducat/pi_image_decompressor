@@ -27,6 +27,7 @@ class PiHeader:
     y: int
     mode: int
     ratio: int
+    planes: int
     palette: bytes
     comment: str
     editor: str
@@ -108,11 +109,91 @@ def get_header(data):
 
     cur += 15+1*3*16
 
-    return PiHeader(x, y, mode, ratio, p, comment, saver, mra, cur)
+    return PiHeader(x, y, mode, ratio, planes, p, comment, saver, mra, cur)
+
+
+prev_byte = 0
+
+
+def process_delta(bin_array: list, cursor: int, current_encoding: dict, delta_table: np.array):
+
+    i = 0
+    while bytes(bin_array[cursor:cursor + i]) not in current_encoding:
+        i += 1
+
+        if i > 8:
+            raise TypeError('Wrong Pi encoding ?')
+
+    bin_version = bytes(bin_array[cursor:cursor + i])
+    offset, delta_len = current_encoding[bin_version]
+
+    cursor += i
+    delta_bin = bin_array[cursor:cursor + offset]
+    delta = 0
+    for i, v in enumerate(delta_bin[::-1]):
+        delta |= v << i
+
+    global prev_byte
+
+    delta = delta_table[prev_byte, delta]  # shift
+    delta_table[prev_byte, 1:delta + 1] = delta_table[prev_byte, 0:delta]
+    delta_table[prev_byte, 0] = delta
+
+    prev_byte = delta
+
+    cursor += offset
+
+    return delta, cursor
 
 
 def as_pix_array(data: list, hdr: PiHeader):
     img = np.zeros((hdr.y, hdr.x, 4), dtype=np.uint8)
+
+    colors_nb = 16 if hdr.planes == 4 else 256
+    global prev_byte
+    prev_byte = 0
+
+    pos_x = 0
+    pos_y = 0
+
+    delta_table = np.zeros((colors_nb, colors_nb), dtype=np.uint8)
+
+    for a in range(colors_nb):
+        for b in range(colors_nb):
+            delta_table[a, b] = (colors_nb + a - b) % colors_nb
+
+    def from_u8(x):
+        return [(x >> (7 - i)) & 1 for i in range(8)]
+
+    bin_array = [from_u8(v) for v in data]
+    bin_array = [x for v in bin_array for x in v]
+    cursor = 0
+    d_size = len(data)
+
+    offset_encoding_4 = {
+        bytes([1]): (0, 1),
+        bytes([0, 0]): (2, 1),
+        bytes([0, 1, 0]): (4, 2),
+        bytes([0, 1, 1]): (8, 3),
+    }
+
+    offset_encoding_8 = {
+        bytes([1]): (0, 1),
+        bytes([0, 0]): (2, 1),
+        bytes([0, 1, 0]): (4, 2),
+        bytes([0, 1, 1, 0]): (8, 3),
+        bytes([0, 1, 1, 1, 0]): (16, 4),
+        bytes([0, 1, 1, 1, 1, 0]): (32, 5),
+        bytes([0, 1, 1, 1, 1, 1, 0]): (64, 6),
+        bytes([0, 1, 1, 1, 1, 1, 1, 0]): (128, 7),
+    }
+
+    current_encoding = offset_encoding_4 if hdr.planes == 4 else offset_encoding_8
+
+    while cursor < d_size:
+
+        delta, cursor = process_delta(bin_array, cursor, current_encoding, delta_table)
+        delta, cursor = process_delta(bin_array, cursor, current_encoding, delta_table)
 
     """ Pixels are handled in horizontal 2 dot units.
 
