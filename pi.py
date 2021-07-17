@@ -59,9 +59,12 @@ def main():
         with open(pifile, 'rb') as inp:
             data = list(inp.read())
 
-        if data[0] != ord('P') or data[1] != ord('i'):
+        if bytes(data[0:2]).decode() != "Pi":
             print("%s: Not a PI file!" % pifile)
             continue
+
+        print(f'Converting file {pifile}...')
+        print()
 
         hdr = get_header(data)
         data = as_pix_array(data, hdr)
@@ -83,7 +86,7 @@ def get_header(data):
     mode, n, m, planes = data[cur + 1:cur + 5]
 
     ratio = 1
-    if n != 0 and m != 0:
+    if n != 0 or m != 0:
         ratio = n / m
 
     saver = "".join([chr(c) for c in data[cur + 5:cur + 9]])
@@ -101,6 +104,7 @@ def get_header(data):
     print("Saver model : %s" % saver)
     print("Image dimension : (%d, %d)" % (x, y))
     print("----------------------------------------------")
+    print()
 
     cur += 15+1*3*16
 
@@ -265,6 +269,8 @@ def write_pix_bmp(data: np.array, file_name: str):
     info += to_uint(0, 4)  # v_resolution
     info += to_uint(0, 4)  # palette_size
     info += to_uint(0, 4)  # important_colors
+
+    print(f'Writing to output file: {file_name}')
 
     full_file = bytes(hdr + info + pixels)
     with open(file_name, 'wb') as f:
