@@ -96,7 +96,16 @@ def get_header(data):
     x = (data[cur + 11] << 8) | data[cur + 12]
     y = (data[cur + 13] << 8) | data[cur + 14]
 
-    p = data[cur + 15:cur+15+1*3*16]
+    palette_size = 16 if planes == 4 else 256
+
+    p = data[cur + 15:cur + 15 + 3 * palette_size]
+    p = np.array(p, dtype=np.uint8).reshape((palette_size, 3))
+
+    if np.all((p == 0)):
+        p = np.array(default_palette, dtype=np.uint8).reshape((palette_size, 3))
+
+    p = np.pad(p, ((0, 0), (0, 1)), mode='constant', constant_values=0xFF)
+    print(p)
 
     print("---------------- PI FILE DUMP ----------------")
     print("Comment : %s" % ("None" if len(comment) == 0 else comment))
@@ -108,7 +117,7 @@ def get_header(data):
     print("----------------------------------------------")
     print()
 
-    cur += 15+1*3*16
+    cur += 15 + 3 * palette_size
 
     return PiHeader(x, y, mode, ratio, planes, p, comment, saver, mra, cur)
 
@@ -306,17 +315,17 @@ class PiDecoder:
 
         self.current_encoding = offset_encoding_4 if self.hdr.planes == 4 else offset_encoding_8
 
-        while self.cursor < d_size / 2:
+        while self.cursor < d_size / 1.2:
             self.prev_loc = 0
             location = []
 
             color1 = self.process_delta()
             color2 = self.process_delta()
 
-            self.img[self.pos] = default_palette[color1]
+            self.img[self.pos] = self.hdr.palette[color1]
             self.pos = self.step_pos(*self.pos, 1)
 
-            self.img[self.pos] = default_palette[color2]
+            self.img[self.pos] = self.hdr.palette[color2]
             self.pos = self.step_pos(*self.pos, 1)
 
             while isinstance(location, list):
