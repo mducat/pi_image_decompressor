@@ -105,7 +105,6 @@ def get_header(data):
         p = np.array(default_palette, dtype=np.uint8).reshape((palette_size, 3))
 
     p = np.pad(p, ((0, 0), (0, 1)), mode='constant', constant_values=0xFF)
-    print(p)
 
     print("---------------- PI FILE DUMP ----------------")
     print("Comment : %s" % ("None" if len(comment) == 0 else comment))
@@ -206,46 +205,46 @@ class PiDecoder:
     def h_0(self, length):
         size = 4
 
-        prec_1 = self.img[self.step_pos(*self.pos, -1)]
-        prec_2 = self.img[self.step_pos(*self.pos, -2)]
+        prec_1 = self.img[self.step_pos(-1)]
+        prec_2 = self.img[self.step_pos(-2)]
 
         if self.pos[0] < 4 and self.pos[1] == 0:
             size = 2
         if np.array_equal(prec_1, prec_2):
             size = 2
 
-        to_repeat = [self.img[self.step_pos(*self.pos, -i)] for i in range(size)]
+        to_repeat = [self.img[self.step_pos(-i)] for i in range(size)]
         idx = 0
 
         for i in range(length * 2):
             self.img[self.pos] = to_repeat[idx]
             idx += 1
             idx %= size
-            self.pos = self.step_pos(*self.pos, 1)
+            self.pos = self.step_pos(1)
 
     def h_1(self, length):
         for i in range(length):
-            self.img[self.pos] = self.img[self.step_pos(*self.pos, -self.hdr.y)]
-            self.img[self.step_pos(*self.pos, 1)] = self.img[self.step_pos(*self.pos, -self.hdr.y + 1)]
-            self.pos = self.step_pos(*self.pos, 2)
+            self.img[self.pos] = self.img[self.step_pos(-self.hdr.y)]
+            self.img[self.step_pos(1)] = self.img[self.step_pos(-self.hdr.y + 1)]
+            self.pos = self.step_pos(2)
 
     def h_2(self, length):
         for i in range(length):
-            self.img[self.pos] = self.img[self.step_pos(*self.pos, (-self.hdr.y * 2))]
-            self.img[self.step_pos(*self.pos, 1)] = self.img[self.step_pos(*self.pos, (-self.hdr.y) * 2 + 1)]
-            self.pos = self.step_pos(*self.pos, 2)
+            self.img[self.pos] = self.img[self.step_pos((-self.hdr.y * 2))]
+            self.img[self.step_pos(1)] = self.img[self.step_pos((-self.hdr.y) * 2 + 1)]
+            self.pos = self.step_pos(2)
 
     def h_3(self, length):
         for i in range(length):
-            self.img[self.pos] = self.img[self.step_pos(*self.pos, -self.hdr.y + 1)]
-            self.img[self.step_pos(*self.pos, 1)] = self.img[self.step_pos(*self.pos, -self.hdr.y + 2)]
-            self.pos = self.step_pos(*self.pos, 2)
+            self.img[self.pos] = self.img[self.step_pos(-self.hdr.y + 1)]
+            self.img[self.step_pos(1)] = self.img[self.step_pos(-self.hdr.y + 2)]
+            self.pos = self.step_pos(2)
 
     def h_4(self, length):
         for i in range(length):
-            self.img[self.pos] = self.img[self.step_pos(*self.pos, -self.hdr.y - 1)]
-            self.img[self.step_pos(*self.pos, 1)] = self.img[self.step_pos(*self.pos, -self.hdr.y)]
-            self.pos = self.step_pos(*self.pos, 2)
+            self.img[self.pos] = self.img[self.step_pos(-self.hdr.y - 1)]
+            self.img[self.step_pos(1)] = self.img[self.step_pos(-self.hdr.y)]
+            self.pos = self.step_pos(2)
 
     handler = {
         bytes([0, 0]): h_0,
@@ -261,7 +260,9 @@ class PiDecoder:
 
         self.handler[bytes(location)](self, length)
 
-    def step_pos(self, pos_x, pos_y, nb):
+    def step_pos(self, nb):
+        pos_x, pos_y = self.pos
+
         if nb > 0:
             pos_x += nb
         elif nb < 0:
@@ -323,10 +324,10 @@ class PiDecoder:
             color2 = self.process_delta()
 
             self.img[self.pos] = self.hdr.palette[color1]
-            self.pos = self.step_pos(*self.pos, 1)
+            self.pos = self.step_pos(1)
 
             self.img[self.pos] = self.hdr.palette[color2]
-            self.pos = self.step_pos(*self.pos, 1)
+            self.pos = self.step_pos(1)
 
             while isinstance(location, list):
                 location, length = self.process_repeat()
