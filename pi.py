@@ -130,6 +130,7 @@ class PiDecoder:
     def __init__(self, hdr: PiHeader, data: list):
         self.prev_byte = 0
         self.prev_loc = 0
+        self.first_loc = 0
 
         self.hdr = hdr
         self.cursor = 0
@@ -140,9 +141,11 @@ class PiDecoder:
         self.current_encoding = None
         self.img = None
 
-        bin_array = [from_u8(v) for v in data]
+        bin_array = [from_u8(v) for v in data[hdr.header_size:]]
         bin_array = [x for v in bin_array for x in v]
+
         self.bin_array = bin_array
+        self.d_size = len(self.bin_array)
 
     def process_delta(self):
 
@@ -165,7 +168,7 @@ class PiDecoder:
         delta += offset
 
         color = self.delta_table[self.prev_byte, delta]  # shift
-        self.delta_table[self.prev_byte, 1:color + 1] = self.delta_table[self.prev_byte, 0:color]
+        self.delta_table[self.prev_byte, 1:delta + 1] = self.delta_table[self.prev_byte, 0:delta]
         self.delta_table[self.prev_byte, 0] = color
 
         self.prev_byte = color
@@ -190,15 +193,20 @@ class PiDecoder:
             i += 1
 
         offset = 1 << i
-        enc_len = i
+        enc_len = i + 1
 
-        self.cursor += i
         length_bin = self.bin_array[self.cursor:self.cursor + enc_len]
         length = 0
         for i, v in enumerate(length_bin[::-1]):
             length |= v << i
 
         length += offset
+
+        if self.first_loc == 0:
+            length -= 1
+            self.first_loc = 1
+
+        self.cursor += enc_len
 
         return loc, length
 
@@ -283,7 +291,7 @@ class PiDecoder:
         return pos_x, pos_y
 
     def __call__(self):
-        self.img = np.zeros((self.hdr.y, self.hdr.x, 4), dtype=np.uint8)
+        self.img = np.zeros((self.hdr.x, self.hdr.y, 4), dtype=np.uint8)
 
         colors_nb = 16 if self.hdr.planes == 4 else 256
         self.prev_byte = 0
@@ -293,8 +301,6 @@ class PiDecoder:
         for a in range(colors_nb):
             for b in range(colors_nb):
                 self.delta_table[a, b] = (colors_nb + a - b) % colors_nb
-
-        d_size = len(self.bin_array)
 
         offset_encoding_4 = {
             bytes([1]): (0, 1),
@@ -315,8 +321,9 @@ class PiDecoder:
         }
 
         self.current_encoding = offset_encoding_4 if self.hdr.planes == 4 else offset_encoding_8
+        init = 0
 
-        while self.cursor < d_size / 1.2:
+        while self.cursor < self.d_size / 10:
             self.prev_loc = 0
             location = []
 
@@ -328,6 +335,13 @@ class PiDecoder:
 
             self.img[self.pos] = self.hdr.palette[color2]
             self.pos = self.step_pos(1)
+
+            if not init:
+                init = 1
+            else:
+                if self.bin_array[self.cursor]:
+                    location = 0
+                self.cursor += 1
 
             while isinstance(location, list):
                 location, length = self.process_repeat()
@@ -460,6 +474,7 @@ class PiDecoder:
          In other words, bring 8 to the latest position, and after that shift it in sequence.
          After that, repeat the same thing.
          """
+        print(self.delta_table)
         return self.img
 
 
@@ -467,7 +482,7 @@ def write_pix_bmp(data: np.array, file_name: str):
     def to_uint(x, size):
         return [(x >> i) & 0xFF for i in range(0, size * 8, 8)]
 
-    data = np.flip(data, axis=0)
+    data = np.flip(data.transpose([1, 0, 2]), axis=0)
 
     hdr = [0x42, 0x4D]  # magic
     info = []
