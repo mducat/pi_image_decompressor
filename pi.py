@@ -23,8 +23,8 @@ import numpy as np
 
 @dataclass
 class PiHeader:
-    x: int
-    y: int
+    width: int
+    height: int
     mode: int
     ratio: int
     planes: int
@@ -232,26 +232,26 @@ class PiDecoder:
 
     def h_1(self, length):
         for i in range(length):
-            self.img[self.pos] = self.img[self.step_pos(-self.hdr.y)]
-            self.img[self.step_pos(1)] = self.img[self.step_pos(-self.hdr.y + 1)]
+            self.img[self.pos] = self.img[self.step_pos(-self.hdr.height)]
+            self.img[self.step_pos(1)] = self.img[self.step_pos(-self.hdr.height + 1)]
             self.pos = self.step_pos(2)
 
     def h_2(self, length):
         for i in range(length):
-            self.img[self.pos] = self.img[self.step_pos((-self.hdr.y * 2))]
-            self.img[self.step_pos(1)] = self.img[self.step_pos((-self.hdr.y) * 2 + 1)]
+            self.img[self.pos] = self.img[self.step_pos((-self.hdr.height * 2))]
+            self.img[self.step_pos(1)] = self.img[self.step_pos((-self.hdr.height) * 2 + 1)]
             self.pos = self.step_pos(2)
 
     def h_3(self, length):
         for i in range(length):
-            self.img[self.pos] = self.img[self.step_pos(-self.hdr.y + 1)]
-            self.img[self.step_pos(1)] = self.img[self.step_pos(-self.hdr.y + 2)]
+            self.img[self.pos] = self.img[self.step_pos(-self.hdr.height + 1)]
+            self.img[self.step_pos(1)] = self.img[self.step_pos(-self.hdr.height + 2)]
             self.pos = self.step_pos(2)
 
     def h_4(self, length):
         for i in range(length):
-            self.img[self.pos] = self.img[self.step_pos(-self.hdr.y - 1)]
-            self.img[self.step_pos(1)] = self.img[self.step_pos(-self.hdr.y)]
+            self.img[self.pos] = self.img[self.step_pos(-self.hdr.height - 1)]
+            self.img[self.step_pos(1)] = self.img[self.step_pos(-self.hdr.height)]
             self.pos = self.step_pos(2)
 
     handler = {
@@ -278,11 +278,11 @@ class PiDecoder:
 
         while pos_x < 0:
             pos_y -= 1
-            pos_x += self.hdr.y
+            pos_x += self.hdr.width
 
-        while pos_x >= self.hdr.y:
+        while pos_x >= self.hdr.width:
             pos_y += 1
-            pos_x -= self.hdr.y
+            pos_x -= self.hdr.width
 
         if pos_x < 0 or pos_y < 0:
             pos_y = 0
@@ -291,7 +291,7 @@ class PiDecoder:
         return pos_x, pos_y
 
     def __call__(self):
-        self.img = np.zeros((self.hdr.x, self.hdr.y, 4), dtype=np.uint8)
+        self.img = np.zeros((self.hdr.width, self.hdr.height, 4), dtype=np.uint8)
 
         colors_nb = 16 if self.hdr.planes == 4 else 256
         self.prev_byte = 0
@@ -321,14 +321,17 @@ class PiDecoder:
         }
 
         self.current_encoding = offset_encoding_4 if self.hdr.planes == 4 else offset_encoding_8
+        size = 20
+        # print(self.bin_array[:size])
         init = 0
 
-        while self.cursor < self.d_size / 10:
+        while self.cursor < self.d_size / 2:
             self.prev_loc = 0
             location = []
 
             color1 = self.process_delta()
             color2 = self.process_delta()
+            # print(color1, color2)
 
             self.img[self.pos] = self.hdr.palette[color1]
             self.pos = self.step_pos(1)
@@ -345,8 +348,11 @@ class PiDecoder:
 
             while isinstance(location, list):
                 location, length = self.process_repeat()
+                # print('rep:', location, length)
 
                 self.handle_repeat(location, length)
+
+        # print(self.delta_table)
 
         """ Pixels are handled in horizontal 2 dot units.
     
@@ -474,15 +480,27 @@ class PiDecoder:
          In other words, bring 8 to the latest position, and after that shift it in sequence.
          After that, repeat the same thing.
          """
-        print(self.delta_table)
         return self.img
 
 
 def write_pix_bmp(data: np.array, file_name: str):
+    """
+    Takes any raw image array of shape (x, y, 4) with last dimension being (R, G, B, A),
+    And saves it to a BMP image file.
+    The array data type must be np.uint8, implying a max value in array being 255 (0xFF).
+
+    :param data: The raw input image data
+    :param file_name: The file to write the BMP image to.
+    """
     def to_uint(x, size):
         return [(x >> i) & 0xFF for i in range(0, size * 8, 8)]
 
+    tmp = data.copy()
+    data[..., 0] = tmp[..., 2]
+    data[..., 2] = tmp[..., 0]
     data = np.flip(data.transpose([1, 0, 2]), axis=0)
+
+    del tmp
 
     hdr = [0x42, 0x4D]  # magic
     info = []
