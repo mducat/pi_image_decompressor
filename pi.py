@@ -219,17 +219,15 @@ class PiDecoder:
 
                     self.handle_repeat(location, length)
 
-        """print('excess image data:', len(self.img[self.hdr.width * self.hdr.height:]))
-
-        img = np.array(self.img[:self.hdr.width * self.hdr.height], dtype=np.uint8)
-        img = img.reshape((self.hdr.height, self.hdr.width, 4))
-        return img.transpose([1, 0, 2])"""
-
         img_data = np.array(self.img[:self.hdr.width * self.hdr.height], dtype=np.uint8)
-        img_data = img_data.reshape((1, len(self.img), 4))
+        img = np.zeros((self.hdr.height * self.hdr.width, 4), dtype=np.uint8)
 
-        img = np.zeros((self.hdr.height, self.hdr.width, 4), dtype=np.uint8)
-        img[:img_data.shape[0], :img_data.shape[1], :] = img_data
+        if img_data.shape[0] < img.shape[0]:
+            img[:img_data.shape[0]] = img_data[:]
+        else:
+            img[:] = img_data[:img.shape[0]]
+
+        img = img.reshape((self.hdr.height, self.hdr.width, 4))
         return img.transpose([1, 0, 2])
 
     def process_delta(self):
