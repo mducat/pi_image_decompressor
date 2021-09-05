@@ -2,17 +2,20 @@
 
 
 """
-┌───────────┐
- ｜ ｜
- ↓ a ↑ c
- (Start) First two colors ─── Position ─┬─-Length ──┴────────── → (End)
- (1) ↑ (4) ｜ (4 ') ↑
- ｜ (5) ↓ b ｜
- ｜ ├-2 colors ── More?  ─┬──┤d
- ｜ ↑ (6) (7) ↓ ↓
- ｜ └────────┘ ｜
- ｜ ｜
-└────────────────┘
+
+(c) Yanagisawa, 1990
+
+                                ┌───────────────────┐
+                                │                   │
+                                ↓       a           ↑ c
+ (Start) First two colors ─── Position ─┬─-Length ──┴────────────── → (End)
+            (1)                 ↑  (4)  ↓ (4 ')                  │
+                                │  (5)  │                     b  ↑
+                                │       ├-2 colors ── More?  ─┬──┤ d
+                                │       ↑ (6)        (7)      ↓  │
+                                │       └─────────────────────┘  │
+                                │                                │
+                                └────────────────────────────────┘
 """
 
 import sys
@@ -135,163 +138,15 @@ class PiDecoder:
         self.hdr = hdr
         self.cursor = 0
 
-        self.pos = (0, 0)
+        bin_array = [x for v in data[hdr.header_size:] for x in from_u8(v)]
 
-        self.delta_table = None
-        self.current_encoding = None
-        self.img = None
-
-        bin_array = [from_u8(v) for v in data[hdr.header_size:]]
-        bin_array = [x for v in bin_array for x in v]
+        if bin_array[-32:] == [0 for _ in range(32)]:
+            bin_array = bin_array[:-32]
 
         self.bin_array = bin_array
         self.d_size = len(self.bin_array)
 
-    def process_delta(self):
-
-        i = 0
-        while bytes(self.bin_array[self.cursor:self.cursor + i]) not in self.current_encoding:
-            i += 1
-
-            if i > 8:
-                raise TypeError('Wrong Pi encoding ?', i)
-
-        bin_version = bytes(self.bin_array[self.cursor:self.cursor + i])
-        offset, delta_len = self.current_encoding[bin_version]
-
-        self.cursor += i
-        delta_bin = self.bin_array[self.cursor:self.cursor + delta_len]
-        delta = 0
-        for i, v in enumerate(delta_bin[::-1]):
-            delta |= v << i
-
-        delta += offset
-
-        color = self.delta_table[self.prev_byte, delta]  # shift
-        self.delta_table[self.prev_byte, 1:delta + 1] = self.delta_table[self.prev_byte, 0:delta]
-        self.delta_table[self.prev_byte, 0] = color
-
-        self.prev_byte = color
-
-        self.cursor += delta_len
-        return color
-
-    def process_repeat(self):
-        loc = self.bin_array[self.cursor:self.cursor+2]
-
-        if loc == [1, 1]:
-            loc = self.bin_array[self.cursor:self.cursor+3]
-
-        self.cursor += len(loc)
-
-        if self.prev_loc == loc:
-            return 0, 0
-
-        self.prev_loc = loc
-        i = 0
-        while self.bin_array[self.cursor + i] != 0:
-            i += 1
-
-        offset = 1 << i
-        enc_len = i + 1
-
-        length_bin = self.bin_array[self.cursor:self.cursor + enc_len]
-        length = 0
-        for i, v in enumerate(length_bin[::-1]):
-            length |= v << i
-
-        length += offset
-
-        if self.first_loc == 0:
-            length -= 1
-            self.first_loc = 1
-
-        self.cursor += enc_len
-
-        return loc, length
-
-    def h_0(self, length):
-        size = 4
-
-        prec_1 = self.img[self.step_pos(-1)]
-        prec_2 = self.img[self.step_pos(-2)]
-
-        if self.pos[0] < 4 and self.pos[1] == 0:
-            size = 2
-        if np.array_equal(prec_1, prec_2):
-            size = 2
-
-        to_repeat = [self.img[self.step_pos(-i)] for i in range(size)]
-        idx = 0
-
-        for i in range(length * 2):
-            self.img[self.pos] = to_repeat[idx]
-            idx += 1
-            idx %= size
-            self.pos = self.step_pos(1)
-
-    def h_1(self, length):
-        for i in range(length):
-            self.img[self.pos] = self.img[self.step_pos(-self.hdr.height)]
-            self.img[self.step_pos(1)] = self.img[self.step_pos(-self.hdr.height + 1)]
-            self.pos = self.step_pos(2)
-
-    def h_2(self, length):
-        for i in range(length):
-            self.img[self.pos] = self.img[self.step_pos((-self.hdr.height * 2))]
-            self.img[self.step_pos(1)] = self.img[self.step_pos((-self.hdr.height) * 2 + 1)]
-            self.pos = self.step_pos(2)
-
-    def h_3(self, length):
-        for i in range(length):
-            self.img[self.pos] = self.img[self.step_pos(-self.hdr.height + 1)]
-            self.img[self.step_pos(1)] = self.img[self.step_pos(-self.hdr.height + 2)]
-            self.pos = self.step_pos(2)
-
-    def h_4(self, length):
-        for i in range(length):
-            self.img[self.pos] = self.img[self.step_pos(-self.hdr.height - 1)]
-            self.img[self.step_pos(1)] = self.img[self.step_pos(-self.hdr.height)]
-            self.pos = self.step_pos(2)
-
-    handler = {
-        bytes([0, 0]): h_0,
-        bytes([0, 1]): h_1,
-        bytes([1, 0]): h_2,
-        bytes([1, 1, 0]): h_3,
-        bytes([1, 1, 1]): h_1,
-    }
-
-    def handle_repeat(self, location: list, length: list):
-        if isinstance(location, int):
-            return
-
-        self.handler[bytes(location)](self, length)
-
-    def step_pos(self, nb):
-        pos_x, pos_y = self.pos
-
-        if nb > 0:
-            pos_x += nb
-        elif nb < 0:
-            pos_x += nb
-
-        while pos_x < 0:
-            pos_y -= 1
-            pos_x += self.hdr.width
-
-        while pos_x >= self.hdr.width:
-            pos_y += 1
-            pos_x -= self.hdr.width
-
-        if pos_x < 0 or pos_y < 0:
-            pos_y = 0
-            pos_x = 0
-
-        return pos_x, pos_y
-
-    def __call__(self):
-        self.img = np.zeros((self.hdr.width, self.hdr.height, 4), dtype=np.uint8)
+        self.img = []
 
         colors_nb = 16 if self.hdr.planes == 4 else 256
         self.prev_byte = 0
@@ -321,41 +176,214 @@ class PiDecoder:
         }
 
         self.current_encoding = offset_encoding_4 if self.hdr.planes == 4 else offset_encoding_8
-        size = 20
-        # print(self.bin_array[:size])
-        init = 0
 
-        while self.cursor < self.d_size / 2:
+    def __call__(self):
+        size = 120
+        print(self.bin_array[:size])
+        self.d_size = size
+
+        location = []
+
+        self.img.append(self.process_delta())
+        self.img.append(self.process_delta())
+
+        while isinstance(location, list):
+            location, length = self.process_repeat()
+
+            self.handle_repeat(location, length)
+
+        while self.cursor < self.d_size:
             self.prev_loc = 0
             location = []
 
-            color1 = self.process_delta()
-            color2 = self.process_delta()
-            # print(color1, color2)
+            print('do_delta', self.cursor)
 
-            self.img[self.pos] = self.hdr.palette[color1]
-            self.pos = self.step_pos(1)
+            color = self.process_delta()
+            if self.cursor >= self.d_size:
+                break
 
-            self.img[self.pos] = self.hdr.palette[color2]
-            self.pos = self.step_pos(1)
+            self.img.append(color)
 
-            if not init:
-                init = 1
-            else:
-                if self.bin_array[self.cursor]:
-                    location = 0
-                self.cursor += 1
+            color = self.process_delta()
+            if self.cursor >= self.d_size:
+                break
 
-            while isinstance(location, list):
-                location, length = self.process_repeat()
-                # print('rep:', location, length)
+            self.img.append(color)
 
-                self.handle_repeat(location, length)
+            self.cursor += 1
 
-        # print(self.delta_table)
+            if not self.bin_array[self.cursor - 1]:
+
+                while isinstance(location, list) and self.cursor < self.d_size:
+                    location, length = self.process_repeat()
+
+                    self.handle_repeat(location, length)
+
+        """print('excess image data:', len(self.img[self.hdr.width * self.hdr.height:]))
+
+        img = np.array(self.img[:self.hdr.width * self.hdr.height], dtype=np.uint8)
+        img = img.reshape((self.hdr.height, self.hdr.width, 4))
+        return img.transpose([1, 0, 2])"""
+
+        img_data = np.array(self.img[:self.hdr.width * self.hdr.height], dtype=np.uint8)
+        img_data = img_data.reshape((1, len(self.img), 4))
+
+        img = np.zeros((self.hdr.height, self.hdr.width, 4), dtype=np.uint8)
+        img[:img_data.shape[0], :img_data.shape[1], :] = img_data
+        return img.transpose([1, 0, 2])
+
+    def process_delta(self):
+
+        max_len = max([len(v) for v in self.current_encoding.keys()])
+
+        i = 0
+        while self.cursor + i < self.d_size and \
+                bytes(self.bin_array[self.cursor:self.cursor + i]) not in self.current_encoding:
+            i += 1
+
+            if i > max_len:
+                raise TypeError('Wrong Pi encoding: delta length ' + str(i))
+
+        if self.cursor + i >= self.d_size:
+            self.cursor += i
+
+            return
+
+        bin_version = bytes(self.bin_array[self.cursor:self.cursor + i])
+        offset, delta_len = self.current_encoding[bin_version]
+
+        if self.cursor + i + delta_len >= self.d_size:
+            self.cursor += i + delta_len
+
+            return
+
+        self.cursor += i
+        print('cursor += ',i)
+        delta_bin = self.bin_array[self.cursor:self.cursor + delta_len]
+        delta = 0
+        for i, v in enumerate(delta_bin[::-1]):
+            delta |= v << i
+
+        delta += offset
+        print('delta', delta)
+
+        color = self.delta_table[self.prev_byte, delta]  # shift
+        self.delta_table[self.prev_byte, 1:delta + 1] = self.delta_table[self.prev_byte, 0:delta]
+        self.delta_table[self.prev_byte, 0] = color
+
+        self.prev_byte = color
+
+        self.cursor += delta_len
+        print('cursor += ', delta_len)
+        return self.hdr.palette[color]
+
+    def process_repeat(self):
+        loc = self.bin_array[self.cursor:self.cursor+2]
+
+        if loc == [1, 1]:
+            loc = self.bin_array[self.cursor:self.cursor+3]
+
+        self.cursor += len(loc)
+
+        if self.cursor + 3 >= self.d_size or self.prev_loc == loc:
+            return 0, 0
+
+        self.prev_loc = loc
+        i = 0
+        while self.cursor + i < self.d_size and self.bin_array[self.cursor + i] != 0:
+            i += 1
+
+        offset = 1 << i
+        enc_len = i + 1
+
+        length_bin = self.bin_array[self.cursor + enc_len:self.cursor + enc_len + i]
+        length = 0
+        for i, v in enumerate(length_bin[::-1]):
+            length += v << i
+
+        length += offset
+
+        if self.first_loc == 0:
+            length -= 1
+            self.first_loc = 1
+        if length > 10000:
+            print(length_bin)
+            print(self.bin_array[self.cursor: self.cursor + enc_len])
+            # raise ValueError('length too long : ' + str(length))
+
+        self.cursor += enc_len + i
+
+        return loc, length
+
+    def h_0(self, length: int):
+        size = 4
+
+        prec_1 = self.img[-1]
+        prec_2 = self.img[-2]
+
+        if len(self.img) < 4:
+            size = 2
+        if np.array_equal(prec_1, prec_2):
+            size = 2
+
+        to_repeat = [self.img[i - size] for i in range(size)]
+        idx = 0
+        for i in range(length * 2):
+            self.img.append(to_repeat[idx])
+
+            idx += 1
+            idx %= size
+
+    def do_cpy(self, location, length, exception):
+        if len(self.img) < location:
+            for i in range(length):
+                self.img.append(exception[0])
+                self.img.append(exception[1])
+        else:
+            for i in range(length):
+                self.img.append(self.img[-location])
+                self.img.append(self.img[-location + 1])
+
+    def h_1(self, length: int):
+        first_bytes = self.img[:2]
+        self.do_cpy(self.hdr.width, length, first_bytes)
+
+    def h_2(self, length: int):
+        first_bytes = self.img[:2]
+        self.do_cpy(self.hdr.width * 2, length, first_bytes)
+
+    def h_3(self, length: int):
+        first_bytes_reversed = self.img[:2]
+        first_bytes_reversed.reverse()
+
+        self.do_cpy(self.hdr.width - 1, length, first_bytes_reversed)
+
+    def h_4(self, length: int):
+        first_bytes_reversed = self.img[:2]
+        first_bytes_reversed.reverse()
+
+        self.do_cpy(self.hdr.width + 1, length, first_bytes_reversed)
+
+    def handle_repeat(self, location: list, length: int):
+        if isinstance(location, int):
+            print('STOP')
+            return
+
+        print('rep:', location, length)
+        handler = {
+            bytes([0, 0]): self.h_0,
+            bytes([0, 1]): self.h_1,
+            bytes([1, 0]): self.h_2,
+            bytes([1, 1, 0]): self.h_3,
+            bytes([1, 1, 1]): self.h_4,
+        }
+
+        # if length > 10000:
+        #    raise ValueError('length too long : ' + str(length))
+        handler[bytes(location)](length)
 
         """ Pixels are handled in horizontal 2 dot units.
-    
+
          1) First, record the first (upper left) 2-dot color.
          Then, it is assumed that the two dots fill two lines above the target screen.
          2) Then record horizontally from top left to bottom right (the right end is connected to the left end of the next line).
@@ -379,16 +407,16 @@ class PiDecoder:
          c) Right when compression is done, up if not.
          d) Up when compression is complete, down if not.
         The end is when the pixel extends out of the target range.
-        
+
          ○ Position
          ・ The following 5 locations are used relative to the point of interest.
          Position 0) A little special.  :-)
-        
+
          Compare the two dots one unit before.
-        
+
          2 dots left for same color 
          4 dots left for different colors
-        
+
                  will do.  This is a 4x4 tile measure.
          In most cases, the compression rate is higher when only 2 dots are left,
          Although 4x4 is small, it cannot be ignored.  Also located at 6 places
@@ -398,21 +426,21 @@ class PiDecoder:
          (I personally want to avoid mode classification)
          However, I denied that it was awkward because I did something special.
                  Can not.  (; _;)
-        
+
          Position 1) 2 dots on 1 line
          Position 2) 2 dots on 2 lines
          Position 3) 1 dot on 1 line 2 dots to the right
          Position 4) 1 dot on 1 line 2 dots to the left
-        
+
           note)
          In "Overall Flow" (5), I wrote that it cannot be the same position as last time.
          Because the special thing was done in position 0, the same position appears in position 0
              There is a possibility.  So if you set a flag and the last time was position 0, this time
          Make sure that position 0 cannot be reached.  (^^)
-        
+
          ・ Position coding method
          (Maybe there is a way to mix it to length)
-        
+
          Position 0 → 00
          Position 1 → 01
          Position 2 → 10
@@ -427,27 +455,27 @@ class PiDecoder:
          4-7 110xx
          8-15 1110xxx
          16-31 11110xxxx
-        
+
          (X is 0 or 1 in binary)
          And so on
-        
+
          ○ Continuation
          ・ It becomes a flag to continue recording the color.
          Continued → 1
          No continuation → 0
          (Record is 1 bit long)
-        
+
          ○ Color
          -The color is 2 dots per unit, but recording is done separately for each dot.
          The method encodes the number of colors that appeared before.  For example, if it is the same color as last time, it will be 0,
          If it is the same as the previous time, it will be 1.  Then, further add this to the color of the dot to the left.
          Divided into 16 ways.  This is because the closer the color is, the more likely it is that it will reappear.
          Due to the relationship, we use that there is a strong correlation with the color to the left of the dot.
-        
+
          ・ There are various methods.  This time, use the following method.
-        
+
          First, prepare the following table.  (initial value)
-        
+
          (1 dot left color) (old) (new)
          0 123456789ABCDEF0
          1 23456789ABCDEF01
@@ -465,22 +493,21 @@ class PiDecoder:
          D EF0123456789 ABCD
          EF0123456789ABCDE
          F 0123456789ABCDEF
-        
+
          (0 to F indicate a color code in 1-digit hexadecimal)
-        
+
          Here, suppose you want to record color 8 (the color to the left of one dot is 5).  Because 1 dot left is 5,
-        
+
          5 6789ABCDEF012345
-        
+
          Look at it.  Then I will record 13 because it is the 13th from the newest one.  And
          Since we bring color 8 to the latest, the table is as follows.
-        
+
          5 679ABCDEF0123458
-        
+
          In other words, bring 8 to the latest position, and after that shift it in sequence.
          After that, repeat the same thing.
          """
-        return self.img
 
 
 def write_pix_bmp(data: np.array, file_name: str):
