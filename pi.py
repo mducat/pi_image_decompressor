@@ -180,46 +180,50 @@ class PiDecoder:
     def __call__(self):
         size = 120
         print(self.bin_array[:size])
-        self.d_size = size
+        # self.d_size = size
 
+        self.process_delta_seq()
+        self.process_rep_seq()
+
+        while self.cursor < self.d_size:
+            self.prev_loc = 0
+
+            self.process_delta_seq()
+            self.cursor += 1
+
+            if not self.bin_array[self.cursor - 1]:
+                self.process_rep_seq()
+
+        return self.normalize_image()
+
+    def process_delta_seq(self):
+
+        color = self.process_delta()
+        if self.cursor >= self.d_size:
+            return False
+
+        self.img.append(color)
+
+        color = self.process_delta()
+        if self.cursor >= self.d_size:
+            return False
+
+        self.img.append(color)
+
+        return True
+
+    def process_rep_seq(self):
         location = []
 
-        self.img.append(self.process_delta())
-        self.img.append(self.process_delta())
-
-        while isinstance(location, list):
+        while isinstance(location, list) and self.cursor < self.d_size:
             location, length = self.process_repeat()
 
             self.handle_repeat(location, length)
 
-        while self.cursor < self.d_size:
-            self.prev_loc = 0
-            location = []
+    def normalize_image(self):
+        img = [self.hdr.palette[v] for v in self.img]
 
-            print('do_delta', self.cursor)
-
-            color = self.process_delta()
-            if self.cursor >= self.d_size:
-                break
-
-            self.img.append(color)
-
-            color = self.process_delta()
-            if self.cursor >= self.d_size:
-                break
-
-            self.img.append(color)
-
-            self.cursor += 1
-
-            if not self.bin_array[self.cursor - 1]:
-
-                while isinstance(location, list) and self.cursor < self.d_size:
-                    location, length = self.process_repeat()
-
-                    self.handle_repeat(location, length)
-
-        img_data = np.array(self.img[:self.hdr.width * self.hdr.height], dtype=np.uint8)
+        img_data = np.array(img[:self.hdr.width * self.hdr.height], dtype=np.uint8)
         img = np.zeros((self.hdr.height * self.hdr.width, 4), dtype=np.uint8)
 
         if img_data.shape[0] < img.shape[0]:
@@ -256,14 +260,13 @@ class PiDecoder:
             return
 
         self.cursor += i
-        print('cursor += ',i)
+        print('cursor += ', i)
         delta_bin = self.bin_array[self.cursor:self.cursor + delta_len]
         delta = 0
         for i, v in enumerate(delta_bin[::-1]):
             delta |= v << i
 
         delta += offset
-        print('delta', delta)
 
         color = self.delta_table[self.prev_byte, delta]  # shift
         self.delta_table[self.prev_byte, 1:delta + 1] = self.delta_table[self.prev_byte, 0:delta]
@@ -273,7 +276,8 @@ class PiDecoder:
 
         self.cursor += delta_len
         print('cursor += ', delta_len)
-        return self.hdr.palette[color]
+        print('delta', delta, color)
+        return color
 
     def process_repeat(self):
         loc = self.bin_array[self.cursor:self.cursor+2]
@@ -321,7 +325,7 @@ class PiDecoder:
 
         if len(self.img) < 4:
             size = 2
-        if np.array_equal(prec_1, prec_2):
+        if prec_1 == prec_2:
             size = 2
 
         to_repeat = [self.img[i - size] for i in range(size)]
