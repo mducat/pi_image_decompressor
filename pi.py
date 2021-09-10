@@ -131,7 +131,6 @@ def from_u8(x):
 class PiDecoder:
 
     def __init__(self, hdr: PiHeader, data: list):
-        self.prev_byte = 0
         self.prev_loc = 0
         self.first_loc = 0
 
@@ -149,7 +148,6 @@ class PiDecoder:
         self.img = []
 
         colors_nb = 16 if self.hdr.planes == 4 else 256
-        self.prev_byte = 0
 
         self.delta_table = np.zeros((colors_nb, colors_nb), dtype=np.uint8)
 
@@ -178,10 +176,6 @@ class PiDecoder:
         self.current_encoding = offset_encoding_4 if self.hdr.planes == 4 else offset_encoding_8
 
     def __call__(self):
-        size = 120
-        print(self.bin_array[:size])
-        # self.d_size = size
-
         self.process_delta_seq()
         self.process_rep_seq()
 
@@ -191,7 +185,7 @@ class PiDecoder:
             self.process_delta_seq()
             self.cursor += 1
 
-            if not self.bin_array[self.cursor - 1]:
+            if self.cursor < self.d_size and not self.bin_array[self.cursor - 1]:
                 self.process_rep_seq()
 
         return self.normalize_image()
@@ -260,23 +254,19 @@ class PiDecoder:
             return
 
         self.cursor += i
-        print('cursor += ', i)
         delta_bin = self.bin_array[self.cursor:self.cursor + delta_len]
         delta = 0
         for i, v in enumerate(delta_bin[::-1]):
             delta |= v << i
 
         delta += offset
+        prev_byte = 0 if not self.img else self.img[-1]
 
-        color = self.delta_table[self.prev_byte, delta]  # shift
-        self.delta_table[self.prev_byte, 1:delta + 1] = self.delta_table[self.prev_byte, 0:delta]
-        self.delta_table[self.prev_byte, 0] = color
-
-        self.prev_byte = color
+        color = self.delta_table[prev_byte, delta]  # shift
+        self.delta_table[prev_byte, 1:delta + 1] = self.delta_table[prev_byte, 0:delta]
+        self.delta_table[prev_byte, 0] = color
 
         self.cursor += delta_len
-        print('cursor += ', delta_len)
-        print('delta', delta, color)
         return color
 
     def process_repeat(self):
@@ -308,12 +298,8 @@ class PiDecoder:
         if self.first_loc == 0:
             length -= 1
             self.first_loc = 1
-        if length > 10000:
-            print(length_bin)
-            print(self.bin_array[self.cursor: self.cursor + enc_len])
-            # raise ValueError('length too long : ' + str(length))
 
-        self.cursor += enc_len + i
+        self.cursor += enc_len + enc_len - 1
 
         return loc, length
 
@@ -344,7 +330,7 @@ class PiDecoder:
         else:
             for i in range(length):
                 self.img.append(self.img[-location])
-                self.img.append(self.img[-location + 1])
+                self.img.append(self.img[-location])
 
     def h_1(self, length: int):
         first_bytes = self.img[:2]
@@ -368,10 +354,8 @@ class PiDecoder:
 
     def handle_repeat(self, location: list, length: int):
         if isinstance(location, int):
-            print('STOP')
             return
 
-        print('rep:', location, length)
         handler = {
             bytes([0, 0]): self.h_0,
             bytes([0, 1]): self.h_1,
@@ -380,8 +364,6 @@ class PiDecoder:
             bytes([1, 1, 1]): self.h_4,
         }
 
-        # if length > 10000:
-        #    raise ValueError('length too long : ' + str(length))
         handler[bytes(location)](length)
 
         """ Pixels are handled in horizontal 2 dot units.
